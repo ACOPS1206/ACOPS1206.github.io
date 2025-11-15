@@ -28,6 +28,7 @@
   --code-string: #44cf6e;
   --code-tag: #fb464c;
   --code-value: #a882ff;
+  --text-highlight-bg: #655300;
 }
 
 /*  Light Mode Variables */
@@ -206,11 +207,12 @@ button:hover {
 /* ===========================
     추가된 Markdown 스타일
    =========================== */
+/* 수정된 mark 스타일 */
 mark {
-  background-color: #e0de71;
-  color: #1e1e1e;
+  background-color: var(--text-highlight-bg); /* 변수 사용 */
+  color: var(--text-normal); /* 글자색 변경 */
   padding: 2px 4px;
-  border-radius: 4px;
+  border-radius: 0; /* 둥글기 제거 */
 }
 
 ul.task-list {
@@ -369,6 +371,29 @@ and, I'm from south korea. so my translation can be missing or wrong sometime...
 function simpleMarkdown(md) {
     md = md.replace(/\r\n/g, '\n'); 
 
+    // ==========================================================
+    // (NEW) 인라인 파서 헬퍼 함수
+    // 헤더, 리스트, 단락에서 이 함수를 호출해 인라인 마크다운을 처리합니다.
+    // ==========================================================
+    function parseInline(text) {
+        // 1. 인라인 코드(``)를 가장 먼저 처리해야
+        //    그 안의 특수기호(==, **)가 마크다운으로 변환되는 것을 막을 수 있습니다.
+        text = text.replace(/` + '`(.*?)`' + `/gim, (match, code) => {
+            // 인라인 코드 내부의 HTML 특수문자 이스케이프
+            const escapedCode = code.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+            return '<code>' + escapedCode + '</code>';
+        });
+
+        // 2. 나머지 인라인 마크다운을 처리합니다.
+        //    (이제 <code> 태그 안의 내용은 건드리지 않습니다.)
+        return text.replace(/\[(.*?)\]\((.*?)\)/gim, '<a href="$2" target="_blank">$1</a>')
+                   .replace(/\[\[(.*?)\]\]/g, '<a href="#" class="internal-link">$1</a>')
+                   .replace(/~~(.*?)~~/gim, "<s>$1</s>")
+                   .replace(/==(.*?)==/gim, "<mark>$1</mark>")
+                   .replace(/\*\*(.*?)\*\*/gim, "<b>$1</b>")
+                   .replace(/\*(.*?)\*/gim, "<i>$1</i>");
+    }
+
     const codeBlocks = [];
 
     // 1. (FIXED) 코드 블록을 먼저 추출하고 토큰으로 대체
@@ -392,35 +417,32 @@ function simpleMarkdown(md) {
     // Horizontal Rules
     html = html.replace(/\n(---|\*\*\*)\n/g, "\n<hr>\n");
 
-    // Headers (h1-h6)
-    html = html.replace(/\n(######) (.*)/g, "\n<h6>$2</h6>")
-               .replace(/\n(#####) (.*)/g, "\n<h5>$2</h5>")
-               .replace(/\n(####) (.*)/g, "\n<h4>$2</h4>")
-               .replace(/\n(###) (.*)/g, "\n<h3>$2</h3>")
-               .replace(/\n(##) (.*)/g, "\n<h2>$2</h2>")
-               .replace(/\n(#) (.*)/g, "\n<h1>$2</h1>");
+    // Headers (h1-h6) - (USER FIX)
+    // 콜백 함수를 사용해 캡처한 content를 즉시 parseInline으로 처리합니다.
+    html = html.replace(/\n(######) (.*)/g, (match, h, content) => `\n<h6>${parseInline(content)}</h6>`)
+               .replace(/\n(#####) (.*)/g, (match, h, content) => `\n<h5>${parseInline(content)}</h5>`)
+               .replace(/\n(####) (.*)/g, (match, h, content) => `\n<h4>${parseInline(content)}</h4>`)
+               .replace(/\n(###) (.*)/g, (match, h, content) => `\n<h3>${parseInline(content)}</h3>`)
+               .replace(/\n(##) (.*)/g, (match, h, content) => `\n<h2>${parseInline(content)}</h2>`)
+               .replace(/\n(#) (.*)/g, (match, h, content) => `\n<h1>${parseInline(content)}</h1>`);
 
-    // (FIXED) Blockquotes
+    // (FIXED) Blockquotes - (USER FIX)
+    // 인용문은 내부에 다른 블록(헤더, 목록 등)이 또 올 수 있으므로 '재귀 호출' 방식을 유지합니다.
     html = html.replace(/\n((?:> ?.*(?:\n|$))+)/g, (match, block) => {
         const content = block.replace(/^> ?/gm, ''); 
-        const innerHtml = content.split(/\n\s*\n/)
-            .map(paragraph => {
-                if (!paragraph.trim()) return '<p></p>';
-                const lines = paragraph.split('\n').map(line => line.trim()).join('<br>');
-                return `<p>${lines}</p>`;
-            })
-            .join('');
+        const innerHtml = simpleMarkdown(content); // 재귀 호출
         return '\n<blockquote>' + innerHtml + '</blockquote>\n';
     });
 
     // Images
     html = html.replace(/!\[(.*?)\]\((.*?)\)/gim, '<img src="$2" alt="$1" style="max-width: 100%;">');
 
-    // Lists (Task, Unordered, Ordered)
-    html = html.replace(/\n- \[(x|X)\] (.*)/g, '\n<li class="task-list-item checked">$2</li>')
-               .replace(/\n- \[ \] (.*)/g, '\n<li class="task-list-item">$1</li>')
-               .replace(/\n\d+\. (.*)/g, "\n<li class=\"ol-item\">$1</li>")
-               .replace(/\n- (.*)/g, "\n<li class=\"ul-item\">$1</li>");
+    // Lists (Task, Unordered, Ordered) - (USER FIX)
+    // 콜백 함수를 사용해 캡처한 content를 즉시 parseInline으로 처리합니다.
+    html = html.replace(/\n- \[(x|X)\] (.*)/g, (match, x, content) => `\n<li class="task-list-item checked">${parseInline(content)}</li>`)
+               .replace(/\n- \[ \] (.*)/g, (match, content) => `\n<li class="task-list-item">${parseInline(content)}</li>`)
+               .replace(/\n\d+\. (.*)/g, (match, content) => `\n<li class="ol-item">${parseInline(content)}</li>`)
+               .replace(/\n- (.*)/g, (match, content) => `\n<li class="ul-item">${parseInline(content)}</li>`);
 
     // List Grouping
     html = html.replace(/((?:\n<li class="ul-item">.*<\/li>)+)/g, "\n<ul>$1\n</ul>")
@@ -432,17 +454,14 @@ function simpleMarkdown(md) {
         const trimmed = line.trim();
         if (trimmed === "") return "";
 
+        // (FIXED) 이 검사는 이제 안전합니다.
+        // 왜냐하면 h1, li 등은 이미 위에서 인라인 파싱이 완료된 상태이기 때문입니다.
         if (/^__CODE_BLOCK_/.test(trimmed) || /^<(h[1-6]|ul|ol|li|pre|code|blockquote|hr|img|div)/.test(trimmed) || /^<\/(ul|ol|blockquote)>$/.test(trimmed)) {
             return line; 
         }
 
-        line = line.replace(/\[(.*?)\]\((.*?)\)/gim, '<a href="$2" target="_blank">$1</a>')
-                   .replace(/\[\[(.*?)\]\]/g, '<a href="#" class="internal-link">$1</a>')
-                   .replace(/` + '`(.*?)`' + `/gim, '<code>$1</code>')
-                   .replace(/~~(.*?)~~/gim, "<s>$1</s>")
-                   .replace(/==(.*?)==/gim, "<mark>$1</mark>")
-                   .replace(/\*\*(.*?)\*\*/gim, "<b>$1</b>")
-                   .replace(/\*(.*?)\*/gim, "<i>$1</i>");
+        // 위에서 걸러지지 않은 나머지 줄(일반 <p> 문단)에 대해 인라인 파서를 실행합니다.
+        line = parseInline(line);
 
         return `<p>${line}</p>`;
     }).join('\n');
@@ -460,6 +479,7 @@ function simpleMarkdown(md) {
 
     return html.trim();
 }
+
 </script>
 
 <script>
